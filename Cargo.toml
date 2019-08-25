@@ -1,0 +1,7 @@
+[package]
+name = "beamdump"
+version = "0.1.0"
+authors = ["Jason Olson <jolson88@outlook.com>"]
+edition = "2018"
+
+[dependencies]
