@@ -5,3 +5,5 @@ authors = ["Jason Olson <jolson88@outlook.com>"]
 edition = "2018"
 
 [dependencies]
+byteorder = "1.3.2"
+
