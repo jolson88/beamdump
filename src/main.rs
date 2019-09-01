@@ -1,5 +1,4 @@
 use byteorder::{BigEndian, ReadBytesExt};
-use std::convert::TryInto;
 use std::env;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -12,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut reader = BufReader::new(file);
     let beam_data = BeamData::from_file(&mut reader)?;
-    println!("Parsed beam file: {:?}", beam_data);
+    println!("Parsed beam file: {:#?}", beam_data);
     Ok(())
 }
 
@@ -20,6 +19,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct BeamData {
     size: u32,
     atoms: Vec<String>,
+    exports: Vec<Export>,
+}
+
+#[derive(Debug, Default)]
+struct Export {
+    name: String,
+    arity: u32,
+    label: u32
 }
 
 #[derive(Debug)]
@@ -47,13 +54,13 @@ fn read_chunk(reader: &mut BufReader<File>) -> Result<(Chunk, u32), Box<dyn std:
     reader.read_exact(&mut name)?;
     let size = reader.read_u32::<BigEndian>()?;
 
-    let mut data = vec![0u8; size.try_into()?];
+    let mut data = vec![0u8; size as usize];
     reader.read_exact(&mut data[..])?;
 
     // Beam files are padded to always occur on 4-byte boundaries. So we need to see if there is any padding
     // we need to skip here.
     let padding = (4 - (size % 4)) % 4;
-    reader.seek(SeekFrom::Current(padding.try_into()?))?;
+    reader.seek(SeekFrom::Current(padding as i64))?;
 
     // Total bytes read is name field (4 bytes) + size field (4 bytes) + size of chunk + padding
     Ok((Chunk { name, size, data }, 4 + 4 + size + padding))
@@ -64,6 +71,7 @@ impl BeamData {
         BeamData {
             size,
             atoms: Vec::new(),
+            exports: Vec::new(),
         }
     }
 
@@ -91,8 +99,9 @@ impl BeamData {
     fn parse_chunks(&mut self, chunks: Vec<Chunk>) -> Result<(), Box<dyn std::error::Error>> {
         for chunk in chunks {
             match &chunk.name {
-                b"AtU8" => self.parse_atom_chunk(chunk)?,
-                b"Atom" => self.parse_atom_chunk(chunk)?,
+                b"AtU8" => self.parse_atoms(chunk)?,
+                b"Atom" => self.parse_atoms(chunk)?,
+                b"ExpT" => self.parse_exports(chunk)?,
                 _ => {
                     // Ignore unrecognized chunk
                 }
@@ -104,18 +113,43 @@ impl BeamData {
 
     // Parses an atom chunk from the raw chunk data. The format of the raw atom chunk data is as follows:
     //      - Number of atoms (32-bits / Big Endian)
-    //      - For each atom: length in bytes (8-bits) followed by atom name (# of bytes specified in length)
-    //
-    // The atom name is a string made up of successive utf8 characters
-    fn parse_atom_chunk(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
+    //      - For each atom:
+    //          - length in bytes (8-bits)
+    //          - atom name (# of bytes specified in length). A string made up of successive utf8 characters
+    fn parse_atoms(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
         let mut reader = &chunk.data[..];
         let natoms = reader.read_u32::<BigEndian>()?;
         for _ in 0..natoms {
             let len = reader.read_u8()?;
-            let mut atom = vec![0u8; len.try_into()?];
+            let mut atom = vec![0u8; len as usize];
             reader.read_exact(&mut atom)?;
             self.atoms.push(String::from_utf8(atom)?);
         }
+        Ok(())
+    }
+
+    // Parses the export table from the raw chunk data. The format of the raw export table is as follows:
+    //      - Number of exports (32-bits / Big Endian)
+    //      - For each export:
+    //          - function name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
+    //          - arity: (32-bits / Big Endian)
+    //          - label: (32-bits / Big Endian)
+    fn parse_exports(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
+        let mut reader = &chunk.data[..];
+        let nexports = reader.read_u32::<BigEndian>()?;
+        for _ in 0..nexports {
+            let name_index = reader.read_u32::<BigEndian>()?;
+            let arity = reader.read_u32::<BigEndian>()?;
+            let label = reader.read_u32::<BigEndian>()?;
+            println!("name_index: {}", name_index);
+            self.exports.push(Export {
+                // Indexes into the atom table are 1-based, not 0-based
+                name: self.atoms[(name_index - 1) as usize].clone(),
+                arity,
+                label
+            })
+        }
+
         Ok(())
     }
 }
