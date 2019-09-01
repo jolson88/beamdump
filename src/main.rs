@@ -16,9 +16,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct BeamData {
     size: u32,
+    atoms: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -59,9 +60,17 @@ fn read_chunk(reader: &mut BufReader<File>) -> Result<(Chunk, u32), Box<dyn std:
 }
 
 impl BeamData {
+    fn new(size: u32) -> BeamData {
+        BeamData {
+            size,
+            atoms: Vec::new(),
+        }
+    }
+
     pub fn from_file(reader: &mut BufReader<File>) -> Result<BeamData, Box<dyn std::error::Error>> {
         let size_to_read = read_header(reader)?;
 
+        let mut chunks = Vec::new();
         let mut total_read = 0;
         while total_read < size_to_read {
             let (chunk, bytes_read) = read_chunk(reader)?;
@@ -71,8 +80,42 @@ impl BeamData {
                 str::from_utf8(&chunk.name)?,
                 chunk.size
             );
+            chunks.push(chunk);
         }
 
-        Ok(BeamData { size: size_to_read })
+        let mut data = BeamData::new(size_to_read);
+        data.parse_chunks(chunks)?;
+        Ok(data)
+    }
+
+    fn parse_chunks(&mut self, chunks: Vec<Chunk>) -> Result<(), Box<dyn std::error::Error>> {
+        for chunk in chunks {
+            match &chunk.name {
+                b"AtU8" => self.parse_atom_chunk(chunk)?,
+                b"Atom" => self.parse_atom_chunk(chunk)?,
+                _ => {
+                    // Ignore unrecognized chunk
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // Parses an atom chunk from the raw chunk data. The format of the raw atom chunk data is as follows:
+    //      - Number of atoms (32-bits / Big Endian)
+    //      - For each atom: length in bytes (8-bits) followed by atom name (# of bytes specified in length)
+    //
+    // The atom name is a string made up of successive utf8 characters
+    fn parse_atom_chunk(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
+        let mut reader = &chunk.data[..];
+        let natoms = reader.read_u32::<BigEndian>()?;
+        for _ in 0..natoms {
+            let len = reader.read_u8()?;
+            let mut atom = vec![0u8; len.try_into()?];
+            reader.read_exact(&mut atom)?;
+            self.atoms.push(String::from_utf8(atom)?);
+        }
+        Ok(())
     }
 }
