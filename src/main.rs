@@ -20,13 +20,21 @@ struct BeamData {
     size: u32,
     atoms: Vec<String>,
     exports: Vec<Export>,
+    imports: Vec<Import>,
 }
 
 #[derive(Debug, Default)]
 struct Export {
-    name: String,
+    function_name: String,
     arity: u32,
-    label: u32
+    label: u32,
+}
+
+#[derive(Debug, Default)]
+struct Import {
+    module_name: String,
+    function_name: String,
+    arity: u32,
 }
 
 #[derive(Debug)]
@@ -72,6 +80,7 @@ impl BeamData {
             size,
             atoms: Vec::new(),
             exports: Vec::new(),
+            imports: Vec::new(),
         }
     }
 
@@ -102,6 +111,7 @@ impl BeamData {
                 b"AtU8" => self.parse_atoms(chunk)?,
                 b"Atom" => self.parse_atoms(chunk)?,
                 b"ExpT" => self.parse_exports(chunk)?,
+                b"ImpT" => self.parse_imports(chunk)?,
                 _ => {
                     // Ignore unrecognized chunk
                 }
@@ -136,17 +146,40 @@ impl BeamData {
     //          - label: (32-bits / Big Endian)
     fn parse_exports(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
         let mut reader = &chunk.data[..];
-        let nexports = reader.read_u32::<BigEndian>()?;
-        for _ in 0..nexports {
+        let export_count = reader.read_u32::<BigEndian>()?;
+        for _ in 0..export_count {
             let name_index = reader.read_u32::<BigEndian>()?;
             let arity = reader.read_u32::<BigEndian>()?;
             let label = reader.read_u32::<BigEndian>()?;
-            println!("name_index: {}", name_index);
             self.exports.push(Export {
                 // Indexes into the atom table are 1-based, not 0-based
-                name: self.atoms[(name_index - 1) as usize].clone(),
+                function_name: self.atoms[(name_index - 1) as usize].clone(),
                 arity,
                 label
+            })
+        }
+
+        Ok(())
+    }
+
+    // Parses the import table from the raw chunk data. The format of the raw import table is as follows:
+    //      - Number of imports (32-bits / Big Endian)
+    //      - For each export:
+    //          - module name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
+    //          - function name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
+    //          - arity: (32-bits / Big Endian)
+    fn parse_imports(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
+        let mut reader = &chunk.data[..];
+        let import_count = reader.read_u32::<BigEndian>()?;
+        for _ in 0..import_count {
+            let module_name_index = reader.read_u32::<BigEndian>()?;
+            let function_name_index = reader.read_u32::<BigEndian>()?;
+            let arity = reader.read_u32::<BigEndian>()?;
+            self.imports.push(Import {
+                // Indexes into the atom table are 1-based, not 0-based
+                module_name: self.atoms[(module_name_index - 1) as usize].clone(),
+                function_name: self.atoms[(function_name_index - 1) as usize].clone(),
+                arity
             })
         }
 
