@@ -21,6 +21,7 @@ struct BeamData {
     atoms: Vec<String>,
     exports: Vec<Export>,
     imports: Vec<Import>,
+    code: Code,
 }
 
 #[derive(Debug, Default)]
@@ -35,6 +36,15 @@ struct Import {
     module_name: String,
     function_name: String,
     arity: u32,
+}
+
+#[derive(Debug, Default)]
+struct Code {
+    instruction_set: u32,
+    max_opcode: u32,
+    label_count: u32,
+    function_count: u32,
+    opcodes: Vec<u8>
 }
 
 #[derive(Debug)]
@@ -81,6 +91,7 @@ impl BeamData {
             atoms: Vec::new(),
             exports: Vec::new(),
             imports: Vec::new(),
+            code: Default::default()
         }
     }
 
@@ -112,6 +123,7 @@ impl BeamData {
                 b"Atom" => self.parse_atoms(chunk)?,
                 b"ExpT" => self.parse_exports(chunk)?,
                 b"ImpT" => self.parse_imports(chunk)?,
+                b"Code" => self.parse_code(chunk)?,
                 _ => {
                     // Ignore unrecognized chunk
                 }
@@ -121,11 +133,11 @@ impl BeamData {
         Ok(())
     }
 
-    // Parses an atom chunk from the raw chunk data. The format of the raw atom chunk data is as follows:
-    //      - Number of atoms (32-bits / Big Endian)
-    //      - For each atom:
-    //          - length in bytes (8-bits)
-    //          - atom name (# of bytes specified in length). A string made up of successive utf8 characters
+    /// Parses an atom chunk from the raw chunk data. The format of the raw atom chunk data is as follows:
+    ///      - Number of atoms (32-bits / Big Endian)
+    ///      - For each atom:
+    ///          - length in bytes (8-bits)
+    ///          - atom name (# of bytes specified in length). A string made up of successive utf8 characters
     fn parse_atoms(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
         let mut reader = &chunk.data[..];
         let natoms = reader.read_u32::<BigEndian>()?;
@@ -138,12 +150,12 @@ impl BeamData {
         Ok(())
     }
 
-    // Parses the export table from the raw chunk data. The format of the raw export table is as follows:
-    //      - Number of exports (32-bits / Big Endian)
-    //      - For each export:
-    //          - function name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
-    //          - arity: (32-bits / Big Endian)
-    //          - label: (32-bits / Big Endian)
+    /// Parses the export table from the raw chunk data. The format of the raw export table is as follows:
+    ///      - Number of exports (32-bits / Big Endian)
+    ///      - For each export:
+    ///          - function name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
+    ///          - arity: (32-bits / Big Endian)
+    ///          - label: (32-bits / Big Endian)
     fn parse_exports(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
         let mut reader = &chunk.data[..];
         let export_count = reader.read_u32::<BigEndian>()?;
@@ -162,12 +174,12 @@ impl BeamData {
         Ok(())
     }
 
-    // Parses the import table from the raw chunk data. The format of the raw import table is as follows:
-    //      - Number of imports (32-bits / Big Endian)
-    //      - For each export:
-    //          - module name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
-    //          - function name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
-    //          - arity: (32-bits / Big Endian)
+    /// Parses the import table from the raw chunk data. The format of the raw import table is as follows:
+    ///      - Number of imports (32-bits / Big Endian)
+    ///      - For each export:
+    ///          - module name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
+    ///          - function name (32-bits / Big Endian). Index into the atom table (note: index is 1-based, not 0-based)
+    ///          - arity: (32-bits / Big Endian)
     fn parse_imports(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
         let mut reader = &chunk.data[..];
         let import_count = reader.read_u32::<BigEndian>()?;
@@ -182,6 +194,42 @@ impl BeamData {
                 arity
             })
         }
+
+        Ok(())
+    }
+
+    /// Parses the code chunk from raw chunk data. The format of the code chunk is as follows:
+    ///      - Sub-size (32-bits / Big Endian). Tells us how big the next sub-section is. It is done this way so that
+    ///             more fields can be added in the future to this sub-section without breaking previous parsers
+    ///      - Sub section:
+    ///         - Instruction set (32-bits / Big Endian)
+    ///         - Maximum opcode (32-bits / Big Endian)
+    ///         - Label count (32-bits / Big Endian)
+    ///         - Function count (32-bits / Big Endian)
+    ///      - The rest of the chunk (minus padding) contains the raw opcodes for the module
+    fn parse_code(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
+        let mut reader = &chunk.data[..];
+        let sub_size = reader.read_u32::<BigEndian>()?;
+
+        // We need to do this rather than parsing the various values directly as BEAM files
+        // use sub_size so that extra fields can be added in the future (where the size of the sub
+        // section will end up changing) without breaking existing parsers/runtimes.
+        let mut sub_reader = vec![0u8; sub_size as usize];
+        reader.read_exact(&mut sub_reader)?;
+        let mut sub_data = &sub_reader[..];
+        let instruction_set = sub_data.read_u32::<BigEndian>()?;
+        let max_opcode = sub_data.read_u32::<BigEndian>()?;
+        let label_count = sub_data.read_u32::<BigEndian>()?;
+        let function_count = sub_data.read_u32::<BigEndian>()?;
+
+        self.code = Code {
+            instruction_set,
+            max_opcode,
+            label_count,
+            function_count,
+            opcodes: Vec::new()
+        };
+        reader.read_to_end(&mut self.code.opcodes)?;
 
         Ok(())
     }
