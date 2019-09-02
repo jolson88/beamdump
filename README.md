@@ -1,2 +1,2 @@
 # beamdump
-A tool to dump the internals of an Erlang BEAM file
+A WIP tool to dump the internals of an Erlang BEAM file.
