@@ -22,6 +22,7 @@ struct BeamData {
     exports: Vec<Export>,
     imports: Vec<Import>,
     code: Code,
+    string_literals: Vec<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -78,7 +79,7 @@ fn read_chunk(reader: &mut BufReader<File>) -> Result<(Chunk, u32), Box<dyn std:
     // Beam files are padded to always occur on 4-byte boundaries. So we need to see if there is any padding
     // we need to skip here.
     let padding = (4 - (size % 4)) % 4;
-    reader.seek(SeekFrom::Current(padding as i64))?;
+    reader.seek(SeekFrom::Current(i64::from(padding)))?;
 
     // Total bytes read is name field (4 bytes) + size field (4 bytes) + size of chunk + padding
     Ok((Chunk { name, size, data }, 4 + 4 + size + padding))
@@ -91,7 +92,8 @@ impl BeamData {
             atoms: Vec::new(),
             exports: Vec::new(),
             imports: Vec::new(),
-            code: Default::default()
+            code: Default::default(),
+            string_literals: Vec::new(),
         }
     }
 
@@ -124,6 +126,7 @@ impl BeamData {
                 b"ExpT" => self.parse_exports(chunk)?,
                 b"ImpT" => self.parse_imports(chunk)?,
                 b"Code" => self.parse_code(chunk)?,
+                b"StrT" => self.parse_string_literals(chunk)?,
                 _ => {
                     // Ignore unrecognized chunk
                 }
@@ -230,6 +233,18 @@ impl BeamData {
             opcodes: Vec::new()
         };
         reader.read_to_end(&mut self.code.opcodes)?;
+
+        Ok(())
+    }
+
+    /// Parses string literals out of the raw chunk. The string literals are just a flat array of
+    /// utf8 characters the size of the chunk.
+    fn parse_string_literals(&mut self, chunk: Chunk) -> Result<(), Box<dyn std::error::Error>> {
+        if chunk.size > 0 {
+            let mut reader = &chunk.data[..];
+            self.string_literals = vec![0u8; chunk.size as usize];
+            reader.read_exact(&mut self.string_literals)?;
+        }
 
         Ok(())
     }
